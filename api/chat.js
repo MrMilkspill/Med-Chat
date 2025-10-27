@@ -30,7 +30,6 @@ export default async function handler(req, res) {
     const data = await r.json();
     let text = Array.isArray(data) && data[0]?.generated_text ? data[0].generated_text : data?.generated_text;
     if (!text) return res.status(500).json({ error: "No output text" });
-
     if (text.startsWith(prompt)) text = text.slice(prompt.length);
     return res.status(200).json({ reply: text.trim() });
   } catch (e) {
