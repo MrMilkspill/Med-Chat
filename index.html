@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat with AI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar" aria-label="Chat header">
+    <div class="brand">
+      <div class="dot"></div>
+      <h1>Chat</h1>
+      <span class="muted">User ↔ AI</span>
+    </div>
+    <div class="spacer"></div>
+    <button id="clearChat" class="secondary small" title="Clear messages">Clear</button>
+  </header>
+
+  <main class="layout single">
+    <section class="chat" aria-label="Chat">
+      <ul id="messageList" class="messages" role="list" aria-live="polite"></ul>
+
+      <div id="typing" class="typing" hidden>
+        <div class="avatar bot" aria-hidden="true"></div>
+        <div class="dots" aria-label="AI is typing">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <form id="composer" class="composer" autocomplete="off" aria-label="Message composer">
+        <input id="nameInput" class="name" type="text" value="You" aria-label="Your name" />
+        <textarea id="messageInput" class="text" rows="1" placeholder="Say something…" aria-label="Message text"></textarea>
+        <button id="sendBtn" class="primary" type="submit" title="Send">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Enter to send. Shift+Enter for newline.</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
