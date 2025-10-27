@@ -8,7 +8,13 @@ const storageKey = "solo-chat-v1";
 
 // If your Flask app is running with HTTPS and you trust the cert,
 // change this to "https://127.0.0.1:5000"
-const API_BASE = "http://127.0.0.1:5000";
+const API_BASE = "";
+const res = await fetch(`${API_BASE}/api/chat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ messages })
+});
+
 
 const $ = (s, el = document) => el.querySelector(s);
 const messageList = $("#messageList");
