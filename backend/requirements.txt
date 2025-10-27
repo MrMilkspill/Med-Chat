@@ -1,0 +1,5 @@
+flask
+flask-cors
+huggingface-hub
+python-dotenv
+cryptography
