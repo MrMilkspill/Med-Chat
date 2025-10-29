@@ -1,64 +1,55 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
-import os
 from dotenv import load_dotenv
-import re
+import os
 
 load_dotenv()
-
-HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")  # use your existing key var
-MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
-
-assert HF_TOKEN, "Missing HUGGINGFACE_API_KEY in environment!"
-
-client = InferenceClient(token=HF_TOKEN)
 
 app = Flask(__name__)
 CORS(app)
 
-@app.route("/api/chat", methods=["POST"])
+HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
+MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
+
+if not HF_TOKEN:
+    raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
+
+client = InferenceClient(token=HF_TOKEN)
+
+@app.post("/api/chat")
 def chat():
     data = request.get_json(silent=True) or {}
-    user_message = (data.get("message") or "").strip()
+
+    # Handle both 'message' and 'messages'
+    if "message" in data:
+        user_message = (data["message"] or "").strip()
+    elif "messages" in data and isinstance(data["messages"], list):
+        user_message = (data["messages"][-1].get("content") or "").strip()
+    else:
+        user_message = ""
 
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
-    # Simple identity messages
-    canned = {
-        "who are you": "I'm an AI assistant who can answer questions, explain topics, or just chat.",
-        "what can you do": "I can summarize, research, or generate answers across science, medicine, or anything you throw at me.",
-        "hello": "Hey there! What do you want to talk about?",
-        "hi": "Hey there! How’s it going?"
-    }
-    for key, text in canned.items():
-        if re.search(rf"\b{re.escape(key)}\b", user_message.lower()):
-            return jsonify({"reply": text})
-
-    # Prepare messages for chat completion
-    messages = [
-        {"role": "system", "content": "You are a knowledgeable AI assistant. Be clear and concise."},
-        {"role": "user", "content": user_message}
-    ]
-
     try:
         completion = client.chat.completions.create(
             model=MODEL_ID,
-            messages=messages,
-            max_tokens=400,
+            messages=[
+                {"role": "system", "content": "You are a concise, knowledgeable AI medical assistant who gives clear and accurate information to students."},
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=256,
             temperature=0.7,
+            top_p=0.95
         )
-        ai_reply = completion.choices[0].message.content
-        return jsonify({"reply": ai_reply})
-    except Exception as e:
-        print("Error from model:", e)
-        return jsonify({"reply": f"Server error: {e}"}), 502
+        reply = completion.choices[0].message.content.strip()
+        return jsonify({"reply": reply})
 
-@app.get("/api/health")
-def health():
-    return {"ok": True, "model": MODEL_ID}
+    except Exception as e:
+        print("Model error:", e)
+        return jsonify({"reply": "Sorry, something went wrong with the model."}), 502
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000, debug=True)
