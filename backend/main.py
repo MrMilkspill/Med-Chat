@@ -8,16 +8,17 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# CORS configuration
+# Allow both local and Vercel frontends
 CORS(app, resources={r"/*": {
     "origins": [
-        r"https://.*\.vercel\.app",   # allow all Vercel deployments (main + previews)
-        "http://127.0.0.1:5500"       # local Live Server
+        r"https://.*\.vercel\.app",   # any vercel deployment
+        "http://127.0.0.1:5500"       # local live server
     ],
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type"]
 }})
 
+# Hugging Face credentials
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
 
@@ -26,11 +27,12 @@ if not HF_TOKEN:
 
 client = InferenceClient(token=HF_TOKEN)
 
+
 @app.post("/api/chat")
 def chat():
     data = request.get_json(silent=True) or {}
 
-    # Handle both 'message' and 'messages'
+    # Handle both message formats
     if "message" in data:
         user_message = (data["message"] or "").strip()
     elif "messages" in data and isinstance(data["messages"], list):
@@ -42,10 +44,11 @@ def chat():
         return jsonify({"reply": "Say something first."})
 
     try:
+        # Try using chat.completions (new API)
         completion = client.chat.completions.create(
             model=MODEL_ID,
             messages=[
-                {"role": "system", "content": "You are a concise, knowledgeable AI medical assistant who gives clear and accurate information to students."},
+                {"role": "system", "content": "You are a concise, knowledgeable AI medical assistant who provides accurate, professional, and clear explanations to pre-med students."},
                 {"role": "user", "content": user_message}
             ],
             max_tokens=256,
@@ -53,11 +56,22 @@ def chat():
             top_p=0.95
         )
         reply = completion.choices[0].message.content.strip()
-        return jsonify({"reply": reply})
 
-    except Exception as e:
-        print("Model error:", e)
-        return jsonify({"reply": "Sorry, something went wrong with the model."}), 502
+    except Exception:
+        # Fallback for models that don’t support chat.completions
+        prompt = (
+            "System: You are a concise, knowledgeable AI medical assistant.\n"
+            f"User: {user_message}\nAssistant:"
+        )
+        reply = client.text_generation(
+            prompt,
+            max_new_tokens=220,
+            temperature=0.7,
+            do_sample=True,
+            return_full_text=False
+        ).strip()
+
+    return jsonify({"reply": reply})
 
 
 if __name__ == "__main__":
