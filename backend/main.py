@@ -43,16 +43,17 @@ def extract_user_message(payload: dict) -> str:
 def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
     """
     Try:
-      A) Inference API (text-generation)
-      B) Router (OpenAI-compatible) /v1/completions  <-- NOT chat
-    Returns: (reply_text, meta_dict) or raises HTTPError with both errors.
+      A) Inference API (text-generation)  <-- should work with bigscience/bloom-560m
+      B) Router /v1/completions           <-- fallback
     """
-    # ===== A) Classic Inference API (text-generation) =====
+    is_mistral = "mistral" in MODEL_ID.lower()
+    # Only wrap with [INST] for Mistral-style models
+    prompt_for_textgen = f"<s>[INST] {prompt} [/INST]" if is_mistral else f"{prompt}\n"
+
+    # A) Inference API
     api_a = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
-    # Mistral instruct-style prompt
-    prompt_a = f"<s>[INST] {prompt} [/INST]"
     payload_a = {
-        "inputs": prompt_a,
+        "inputs": prompt_for_textgen,
         "parameters": {
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
@@ -61,52 +62,36 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
             "return_full_text": False
         }
     }
-    try:
+    ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+    if ra.status_code == 503:
+        time.sleep(1.5)
         ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
-        if ra.status_code == 503:
-            time.sleep(1.5)
-            ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
-        if ra.ok:
-            try:
-                out = ra.json()
-            except Exception:
-                out = {"text": ra.text}
-            reply = ""
-            if isinstance(out, list) and out and isinstance(out[0], dict):
-                reply = (out[0].get("generated_text") or "").strip()
-            elif isinstance(out, dict):
-                reply = (out.get("generated_text") or "").strip()
-            if reply:
-                return reply, {"provider": "inference-api", "status": ra.status_code}
-    except Exception:
-        ra = None  # ensure defined
+    if ra.ok:
+        out = ra.json()
+        reply = ""
+        if isinstance(out, list) and out and isinstance(out[0], dict):
+            reply = (out[0].get("generated_text") or "").strip()
+        elif isinstance(out, dict):
+            reply = (out.get("generated_text") or "").strip()
+        if reply:
+            return reply, {"provider": "inference-api", "status": ra.status_code}
 
-    # ===== B) Router (OpenAI-compatible) /v1/completions =====
+    # B) Router completions (may still be 404 for small models; harmless fallback)
     api_b = "https://router.huggingface.co/v1/completions"
-    # Use same instruct prompt
-    prompt_b = f"<s>[INST] {prompt} [/INST]"
     payload_b = {
         "model": MODEL_ID,
-        "prompt": prompt_b,
+        "prompt": prompt_for_textgen,
         "max_tokens": max_new_tokens,
         "temperature": temperature,
         "top_p": top_p
     }
-    try:
-        rb = requests.post(api_b, headers=HEADERS, json=payload_b, timeout=60)
-        if rb.ok:
-            jb = rb.json()
-            # OpenAI-style completions shape: choices[0].text
-            try:
-                txt = (jb["choices"][0]["text"] or "").strip()
-            except Exception:
-                txt = ""
-            if txt:
-                return txt, {"provider": "router-completions", "status": rb.status_code}
-    except Exception:
-        rb = None
+    rb = requests.post(api_b, headers=HEADERS, json=payload_b, timeout=60)
+    if rb.ok:
+        jb = rb.json()
+        txt = (jb.get("choices", [{}])[0].get("text") or "").strip()
+        if txt:
+            return txt, {"provider": "router-completions", "status": rb.status_code}
 
-    # If both failed, surface both errors
     a_status = getattr(ra, "status_code", "NA")
     a_text = getattr(ra, "text", "")[:400]
     b_status = getattr(rb, "status_code", "NA")
@@ -155,8 +140,9 @@ def chat():
         return jsonify({"reply": "Say something first."})
 
     # Keep prompt simple & reliable for both providers
-    system_note = "You are a concise, accurate AI medical assistant for a pre-med student. If uncertain, say so briefly."
-    prompt = f"{system_note}\n\nUser question: {user_message}"
+system_note = "You are a concise, accurate AI medical assistant for a pre-med student. If uncertain, say so briefly."
+prompt = f"{system_note}\n\nUser question: {user_message}"
+reply, meta = hf_generate(prompt, max_new_tokens=220)
 
     try:
         reply, meta = hf_generate(prompt, max_new_tokens=220)
