@@ -30,7 +30,6 @@ HEADERS = {
 }
 
 def extract_user_message(payload: dict) -> str:
-    # Supports {message:"..."} or {messages:[{role,content},...]}
     if "message" in payload:
         return (payload.get("message") or "").strip()
     msgs = payload.get("messages")
@@ -43,15 +42,14 @@ def extract_user_message(payload: dict) -> str:
 
 def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
     """
-    Tries two providers automatically:
+    Try:
       A) Inference API (text-generation)
-      B) Router (OpenAI-compatible) chat/completions
-    Returns: (reply_text, meta_dict)
-    Raises: requests.HTTPError with details if both fail.
+      B) Router (OpenAI-compatible) /v1/completions  <-- NOT chat
+    Returns: (reply_text, meta_dict) or raises HTTPError with both errors.
     """
-    # ========= A) Classic Inference API (text-generation) =========
+    # ===== A) Classic Inference API (text-generation) =====
     api_a = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
-    # Wrap as Mistral instruct prompt
+    # Mistral instruct-style prompt
     prompt_a = f"<s>[INST] {prompt} [/INST]"
     payload_a = {
         "inputs": prompt_a,
@@ -63,53 +61,52 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
             "return_full_text": False
         }
     }
-    ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
-    if ra.status_code == 503:
-        time.sleep(1.5)
+    try:
         ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+        if ra.status_code == 503:
+            time.sleep(1.5)
+            ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+        if ra.ok:
+            try:
+                out = ra.json()
+            except Exception:
+                out = {"text": ra.text}
+            reply = ""
+            if isinstance(out, list) and out and isinstance(out[0], dict):
+                reply = (out[0].get("generated_text") or "").strip()
+            elif isinstance(out, dict):
+                reply = (out.get("generated_text") or "").strip()
+            if reply:
+                return reply, {"provider": "inference-api", "status": ra.status_code}
+    except Exception:
+        ra = None  # ensure defined
 
-    if ra.ok:
-        try:
-            out = ra.json()
-        except Exception:
-            out = {"text": ra.text}
-
-        reply = ""
-        if isinstance(out, list) and out and isinstance(out[0], dict):
-            reply = (out[0].get("generated_text") or "").strip()
-        elif isinstance(out, dict):
-            reply = (out.get("generated_text") or "").strip()
-
-        if reply:
-            return reply, {"provider": "inference-api", "status": ra.status_code}
-
-    # ========= B) Router (OpenAI-compatible) chat =========
-    api_b = "https://router.huggingface.co/v1/chat/completions"
+    # ===== B) Router (OpenAI-compatible) /v1/completions =====
+    api_b = "https://router.huggingface.co/v1/completions"
+    # Use same instruct prompt
+    prompt_b = f"<s>[INST] {prompt} [/INST]"
     payload_b = {
         "model": MODEL_ID,
-        "messages": [
-            {"role": "system", "content": "You are a concise, accurate AI medical assistant for a pre-med student."},
-            {"role": "user", "content": prompt}
-        ],
+        "prompt": prompt_b,
+        "max_tokens": max_new_tokens,
         "temperature": temperature,
-        "top_p": top_p,
-        "max_tokens": max_new_tokens
+        "top_p": top_p
     }
-    rb = requests.post(api_b, headers=HEADERS, json=payload_b, timeout=60)
-
-    if rb.ok:
-        try:
+    try:
+        rb = requests.post(api_b, headers=HEADERS, json=payload_b, timeout=60)
+        if rb.ok:
             jb = rb.json()
-        except Exception:
-            jb = {"text": rb.text}
-        try:
-            txt = (jb["choices"][0]["message"]["content"] or "").strip()
-        except Exception:
-            txt = ""
-        if txt:
-            return txt, {"provider": "router-chat", "status": rb.status_code}
+            # OpenAI-style completions shape: choices[0].text
+            try:
+                txt = (jb["choices"][0]["text"] or "").strip()
+            except Exception:
+                txt = ""
+            if txt:
+                return txt, {"provider": "router-completions", "status": rb.status_code}
+    except Exception:
+        rb = None
 
-    # If we got here, both paths failed → raise with details from both
+    # If both failed, surface both errors
     a_status = getattr(ra, "status_code", "NA")
     a_text = getattr(ra, "text", "")[:400]
     b_status = getattr(rb, "status_code", "NA")
@@ -158,14 +155,13 @@ def chat():
         return jsonify({"reply": "Say something first."})
 
     # Keep prompt simple & reliable for both providers
-    system_note = "Keep it clear and correct. If uncertain, say so briefly."
+    system_note = "You are a concise, accurate AI medical assistant for a pre-med student. If uncertain, say so briefly."
     prompt = f"{system_note}\n\nUser question: {user_message}"
 
     try:
         reply, meta = hf_generate(prompt, max_new_tokens=220)
         return jsonify({"reply": reply, "meta": meta})
     except requests.HTTPError as e:
-        # Echo exact failure for quick debugging in DevTools → Network → Response
         return jsonify({"reply": f"Server error: {e}"}), 502
 
 if __name__ == "__main__":
