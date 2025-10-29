@@ -10,7 +10,7 @@ load_dotenv()
 
 # -------- Config --------
 HF_TOKEN  = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("HF_TOKEN")
-MODEL_ID  = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
+MODEL_ID  = os.getenv("MODEL_ID", "bigscience/bloom-560m")
 PORT      = int(os.getenv("PORT", "5000"))
 
 if not HF_TOKEN:
