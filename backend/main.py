@@ -7,7 +7,13 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# Replace <your-vercel-project> with your actual Vercel URL (no https:// if you want)
+CORS(app, resources={r"/*": {"origins": [
+    "https://med-chat-delta.vercel.app/",   # whatever your actual vercel domain is
+    "http://127.0.0.1:5500"
+]}})
+
 
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
