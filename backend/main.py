@@ -57,9 +57,10 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
     prompt_for_textgen = f"<s>[INST] {prompt} [/INST]" if is_mistral else f"{prompt}\n"
 
     # ---- A) Inference API ----
+    # ---- A) Inference API (no auth header) ----
     api_a = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
     payload_a = {
-        "inputs": prompt_for_textgen,
+        "inputs": f"{prompt}\n",   # no [INST] for bloom
         "parameters": {
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
@@ -68,6 +69,13 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
             "return_full_text": False
         }
     }
+# IMPORTANT: no HEADERS here (no Authorization) → use only content-type
+    ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
+    if ra.status_code == 503:
+        time.sleep(1.5)
+        ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
+            }
+        }
 
     try:
         ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
