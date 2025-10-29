@@ -3,3 +3,4 @@ flask-cors
 huggingface-hub
 python-dotenv
 cryptography
+gunicorn
