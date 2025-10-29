@@ -2,12 +2,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
-import os, time
+import os
 
 load_dotenv()
 
 app = Flask(__name__)
-
 CORS(app, resources={r"/*": {
     "origins": [
         r"https://.*\.vercel\.app",
@@ -45,25 +44,40 @@ def chat():
     system = "You are a concise, accurate AI medical assistant for a pre-med student."
     prompt = f"System: {system}\nUser: {user_message}\nAssistant:"
 
-    for attempt in range(2):
-        try:
-            out = client.text_generation(
+    try:
+        # Prefer 'conversational' per provider support
+        conv_payload = {
+            "text": prompt,
+            "past_user_inputs": [],
+            "generated_responses": []
+        }
+        conv_out = client.conversational(conv_payload)
+        reply = (conv_out.get("generated_text") or "").strip()
+        if not reply and isinstance(conv_out, list) and conv_out and isinstance(conv_out[0], dict):
+            reply = (conv_out[0].get("generated_text") or "").strip()
+
+        # Fallback: text_generation (some providers still allow it)
+        if not reply:
+            tg_out = client.text_generation(
                 prompt,
                 max_new_tokens=220,
                 temperature=0.7,
                 do_sample=True,
                 return_full_text=False
             )
-            reply = (out or "").strip()
-            if not reply:
-                reply = "…"
-            return jsonify({"reply": reply})
-        except Exception as e:
-            if attempt == 0:
-                time.sleep(1.5)
-                continue
-            return jsonify({"reply": f"Server error: {e}"}), 502
+            reply = (tg_out or "").strip()
+
+    except Exception as e:
+        return jsonify({"reply": f"Server error: {e}"}), 502
+
+    if not reply:
+        reply = "…"
+    return jsonify({"reply": reply})
 
 @app.get("/api/health")
 def health():
     return {"ok": True, "model": MODEL_ID}
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
