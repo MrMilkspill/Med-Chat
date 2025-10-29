@@ -1,3 +1,4 @@
+# main.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -6,6 +7,8 @@ import os, time, requests
 load_dotenv()
 
 app = Flask(__name__)
+
+# CORS: your Vercel app + local Live Server
 CORS(app, resources={r"/*": {
     "origins": [
         r"https://.*\.vercel\.app",
@@ -21,10 +24,13 @@ MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
 if not HUGGINGFACE_API_KEY:
     raise RuntimeError("Missing HUGGINGFACE_API_KEY in environment")
 
-API_URL = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
-HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}", "Content-Type": "application/json"}
+HEADERS = {
+    "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
+    "Content-Type": "application/json"
+}
 
 def extract_user_message(payload: dict) -> str:
+    # Supports {message:"..."} or {messages:[{role,content},...]}
     if "message" in payload:
         return (payload.get("message") or "").strip()
     msgs = payload.get("messages")
@@ -35,9 +41,84 @@ def extract_user_message(payload: dict) -> str:
                 return c
     return ""
 
+def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
+    """
+    Tries two providers automatically:
+      A) Inference API (text-generation)
+      B) Router (OpenAI-compatible) chat/completions
+    Returns: (reply_text, meta_dict)
+    Raises: requests.HTTPError with details if both fail.
+    """
+    # ========= A) Classic Inference API (text-generation) =========
+    api_a = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
+    # Wrap as Mistral instruct prompt
+    prompt_a = f"<s>[INST] {prompt} [/INST]"
+    payload_a = {
+        "inputs": prompt_a,
+        "parameters": {
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "do_sample": True,
+            "return_full_text": False
+        }
+    }
+    ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+    if ra.status_code == 503:
+        time.sleep(1.5)
+        ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+
+    if ra.ok:
+        try:
+            out = ra.json()
+        except Exception:
+            out = {"text": ra.text}
+
+        reply = ""
+        if isinstance(out, list) and out and isinstance(out[0], dict):
+            reply = (out[0].get("generated_text") or "").strip()
+        elif isinstance(out, dict):
+            reply = (out.get("generated_text") or "").strip()
+
+        if reply:
+            return reply, {"provider": "inference-api", "status": ra.status_code}
+
+    # ========= B) Router (OpenAI-compatible) chat =========
+    api_b = "https://router.huggingface.co/v1/chat/completions"
+    payload_b = {
+        "model": MODEL_ID,
+        "messages": [
+            {"role": "system", "content": "You are a concise, accurate AI medical assistant for a pre-med student."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_new_tokens
+    }
+    rb = requests.post(api_b, headers=HEADERS, json=payload_b, timeout=60)
+
+    if rb.ok:
+        try:
+            jb = rb.json()
+        except Exception:
+            jb = {"text": rb.text}
+        try:
+            txt = (jb["choices"][0]["message"]["content"] or "").strip()
+        except Exception:
+            txt = ""
+        if txt:
+            return txt, {"provider": "router-chat", "status": rb.status_code}
+
+    # If we got here, both paths failed → raise with details from both
+    a_status = getattr(ra, "status_code", "NA")
+    a_text = getattr(ra, "text", "")[:400]
+    b_status = getattr(rb, "status_code", "NA")
+    b_text = getattr(rb, "text", "")[:400]
+    raise requests.HTTPError(f"A failed: {a_status} {a_text}\nB failed: {b_status} {b_text}")
+
+# ---------- Routes ----------
 @app.get("/")
 def index():
-    # Shows what routes are actually live
     return {
         "ok": True,
         "model": MODEL_ID,
@@ -50,7 +131,6 @@ def health():
 
 @app.get("/api/whoami")
 def whoami():
-    """Verify the HF token is valid on server."""
     r = requests.get(
         "https://huggingface.co/api/whoami-v2",
         headers={"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"},
@@ -64,29 +144,11 @@ def whoami():
 
 @app.get("/api/hf-test")
 def hf_test():
-    """Minimal test using text-generation format (works broadly)."""
-    api_url = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
-    # Mistral instruct format
-    prompt = "<s>[INST] You are helpful. Say 'hi' in one short sentence. [/INST]"
-
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 64,
-            "temperature": 0.7,
-            "top_p": 0.95,
-            "do_sample": True,
-            "return_full_text": False   # some providers ignore this; we handle either shape
-        }
-    }
-
-    r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
     try:
-        data = r.json()
-    except Exception:
-        data = {"text": r.text}
-    return {"status": r.status_code, "data": data}
-
+        reply, meta = hf_generate("Say 'hi' in one short sentence.", max_new_tokens=32)
+        return {"status": 200, "provider": meta["provider"], "reply": reply}
+    except requests.HTTPError as e:
+        return {"status": 502, "error": str(e)}
 
 @app.post("/api/chat")
 def chat():
@@ -95,61 +157,16 @@ def chat():
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
-    # Build an instruction-style prompt for Mistral
-    system = "You are a concise, accurate AI medical assistant for a pre-med student."
-    # Compact instruction block
-    instr = (
-        f"{system}\n\n"
-        f"User question: {user_message}\n"
-        f"Rules: Keep it clear and correct. If uncertain, say so briefly."
-    )
-    prompt = f"<s>[INST] {instr} [/INST]"
-
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 220,
-            "temperature": 0.7,
-            "top_p": 0.95,
-            "do_sample": True,
-            "return_full_text": False
-        }
-    }
-
-    api_url = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
+    # Keep prompt simple & reliable for both providers
+    system_note = "Keep it clear and correct. If uncertain, say so briefly."
+    prompt = f"{system_note}\n\nUser question: {user_message}"
 
     try:
-        r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
-        # If model is cold-starting, HF returns 503; you can retry once if you want
-        if r.status_code == 503:
-            time.sleep(1.5)
-            r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
-
-        r.raise_for_status()
-        out = r.json()
-
-        # Possible shapes:
-        #   [{"generated_text":"..."}]
-        #   {"generated_text":"..."}
-        reply = ""
-        if isinstance(out, list) and out and isinstance(out[0], dict):
-            reply = (out[0].get("generated_text") or "").strip()
-        elif isinstance(out, dict):
-            reply = (out.get("generated_text") or "").strip()
-
-        if not reply:
-            reply = "…"
-
-        return jsonify({"reply": reply})
-
+        reply, meta = hf_generate(prompt, max_new_tokens=220)
+        return jsonify({"reply": reply, "meta": meta})
     except requests.HTTPError as e:
-        try:
-            detail = r.json()
-        except Exception:
-            detail = r.text
-        return jsonify({"reply": f"Server error: {e}; detail: {detail}"}), 502
-    except Exception as e:
+        # Echo exact failure for quick debugging in DevTools → Network → Response
         return jsonify({"reply": f"Server error: {e}"}), 502
-        
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
