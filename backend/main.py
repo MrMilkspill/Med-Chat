@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
-MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.2")  # stick to v0.2
+MODEL_ID = os.getenv("MODEL_ID", "HuggingFaceH4/zephyr-7b-beta")  # stick to v0.2
 
 if not HF_TOKEN:
     raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
