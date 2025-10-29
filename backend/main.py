@@ -9,8 +9,8 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={r"/*": {
     "origins": [
-        r"https://.*\.vercel\.app",
-        "http://127.0.0.1:5500"
+        r"https://.*\.vercel\.app",   # any vercel deployment (prod + previews)
+        "http://127.0.0.1:5500"       # local Live Server
     ],
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type"]
@@ -21,9 +21,11 @@ MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
 if not HF_TOKEN:
     raise RuntimeError("Missing HUGGINGFACE_API_KEY in environment")
 
+# Bind client to specific model
 client = InferenceClient(model=MODEL_ID, token=HF_TOKEN)
 
 def extract_user_message(payload: dict) -> str:
+    """Accept {message: "..."} or {messages:[{role,content},...]}."""
     if "message" in payload:
         return (payload["message"] or "").strip()
     msgs = payload.get("messages")
@@ -41,18 +43,19 @@ def chat():
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
-        system = "You are a concise, accurate AI medical assistant for a pre-med student."
+    # ✅ Define these BEFORE try:
+    system = "You are a concise, accurate AI medical assistant for a pre-med student."
     prompt = f"System: {system}\nUser: {user_message}\nAssistant:"
 
     try:
-        # ✅ Correct: use named args for the conversational task
+        # Provider supports 'conversational' for this model
         conv_out = client.conversational(
             text=prompt,
             past_user_inputs=[],
             generated_responses=[]
         )
 
-        # HF usually returns a dict with generated_text
+        # HF typically returns dict with 'generated_text'
         reply = ""
         if isinstance(conv_out, dict):
             reply = (conv_out.get("generated_text") or "").strip()
@@ -65,17 +68,13 @@ def chat():
         return jsonify({"reply": reply})
 
     except Exception as e:
-        # show the real error so you can see it in the Vercel Network Response
+        # Surface real error to Vercel Network → Response
         return jsonify({"reply": f"Server error: {e}"}), 502
-
-    if not reply:
-        reply = "…"
-    return jsonify({"reply": reply})
 
 @app.get("/api/health")
 def health():
     return {"ok": True, "model": MODEL_ID}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Local dev
+    app.run(host="0.0.0.0", port=5000, debug=True)
