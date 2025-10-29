@@ -9,6 +9,13 @@ load_dotenv()
 
 app = Flask(__name__)
 
+def index():
+    # shows the routes your server actually has right now
+    return {
+        "ok": True,
+        "model": os.getenv("MODEL_ID"),
+        "routes": sorted([str(r) for r in app.url_map.iter_rules()])
+    }
 # CORS: allow your Vercel site + local Live Server
 CORS(app, resources={r"/*": {
     "origins": [
