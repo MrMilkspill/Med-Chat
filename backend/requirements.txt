@@ -4,3 +4,5 @@ huggingface-hub
 python-dotenv
 cryptography
 gunicorn
+requests
+python-dotenv
