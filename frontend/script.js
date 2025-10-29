@@ -1,20 +1,11 @@
 /* One-user chat with an API-backed bot.
    - Messages saved in localStorage.
-   - Bot replies by calling your Flask backend at /api/chat.
+   - Bot replies by calling your Vercel serverless function at /api/chat.
    - Falls back to a local offline bot if the request fails.
 */
 
 const storageKey = "solo-chat-v1";
-
-// If your Flask app is running with HTTPS and you trust the cert,
-// change this to "https://127.0.0.1:5000"
-const API_BASE = "";
-const res = await fetch(`${API_BASE}/api/chat`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ messages })
-});
-
+const API_BASE = "http://127.0.0.1:5000"; // keep relative; Vercel will serve /api/chat from the same origin
 
 const $ = (s, el = document) => el.querySelector(s);
 const messageList = $("#messageList");
@@ -39,7 +30,7 @@ composer.addEventListener("submit", e => {
   messageInput.value = "";
   autoGrow(messageInput);
 
-  respond(text); // trigger bot
+  respond(text);
 });
 
 messageInput.addEventListener("keydown", e => {
@@ -57,21 +48,19 @@ clearBtn.addEventListener("click", () => {
   renderAll();
 });
 
-/* BOT RESPONSE PIPELINE: calls backend, falls back to offline bot */
+/* BOT RESPONSE PIPELINE */
 async function respond(userText){
   showTyping(true);
   await delay(fakeLatency(userText));
 
   let reply;
   try {
-    // send the last 20 messages as context
     const history = messages.slice(-20).map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: m.text
     }));
     reply = await callYourApi(history);
   } catch (err) {
-    // fallback to offline bot if the server is down or blocked
     reply = await localBot(userText, messages);
   }
 
@@ -79,7 +68,7 @@ async function respond(userText){
   addMessage({ author: "AI", role: "assistant", text: reply });
 }
 
-/* Real API call to your Flask backend */
+/* Real API call to your Vercel backend */
 async function callYourApi(history){
   const r = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -101,21 +90,14 @@ async function callYourApi(history){
   return data.reply.trim();
 }
 
-/* Local offline bot. Not smart, but useful as a fallback. */
+/* Local offline bot fallback */
 async function localBot(query, history){
   const q = query.trim();
   const lower = q.toLowerCase();
 
-  // 1) Greetings
   if (/\b(hi|hello|hey|yo|sup)\b/i.test(q)) {
-    return pick([
-      "Hey. What do you need?",
-      "Hello. Ask your question like you mean it.",
-      "Hi. I’m here, unfortunately."
-    ]);
+    return "Hey. What do you need?";
   }
-
-  // 2) Time/date
   if (/\b(time|clock)\b/i.test(q)) {
     return "Current time: " + new Date().toLocaleTimeString();
   }
@@ -123,13 +105,11 @@ async function localBot(query, history){
     return "Today is " + new Date().toLocaleDateString(undefined, { weekday:"long", year:"numeric", month:"long", day:"numeric" });
   }
 
-  // 3) Simple math = or what is
   const mathMatch = lower.match(/(?:^|\b)(?:what\s+is|calculate|calc|=)\s*([0-9\.\s\+\-\*\/\(\)\^%]+)\s*\??$/i);
   if (mathMatch) {
     const expr = mathMatch[1];
     try {
       const safe = expr.replace(/\^/g,"**");
-      // Only numbers and operators retained:
       if (!/^[0-9\.\s\+\-\*\/\(\)%\**]+$/.test(safe)) throw new Error("bad");
       // eslint-disable-next-line no-new-func
       const result = Function(`"use strict"; return (${safe});`)();
@@ -140,12 +120,6 @@ async function localBot(query, history){
     return "That expression didn’t compute. Try something simpler.";
   }
 
-  // 4) Links answer
-  if (/\b(link|url|website)\b/i.test(q)) {
-    return "I don’t have browsing here. Drop a URL and I’ll at least recognize it.";
-  }
-
-  // 5) “Search” style: summarize last N user messages containing the keyword
   const kwMatch = lower.match(/\b(search|find|look\s*for)\s+(.+)/i);
   if (kwMatch) {
     const term = kwMatch[2].trim().toLowerCase();
@@ -157,12 +131,7 @@ async function localBot(query, history){
     return `Found ${hits.length} recent ${hits.length===1?"message":"messages"} mentioning “${term}”:\n${bullets}`;
   }
 
-  // 6) Default
-  return pick([
-    "Got it. If you want something smarter, wire this to a real API. For now, ask about time, date, or basic math.",
-    "Message received. I can handle greetings, time, dates, tiny math, and lazy search.",
-    "Cool. Sadly, my offline brain is small. Ask me to compute something or search recent messages."
-  ]);
+  return "Got it. Wire this to the real API for smarter answers.";
 }
 
 /* UI + storage */
@@ -209,7 +178,6 @@ function load(k){ try { return JSON.parse(localStorage.getItem(k) || "null"); } 
 function escapeHtml(s){ return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function linkify(s){ return s.replace(/\b(https?:\/\/[^\s<]+)\b/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'); }
 function formatTime(ts){ const d=new Date(ts); return d.toLocaleString([], {year:"numeric",month:"short",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
-function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
 function seed(){
   const now = Date.now();
