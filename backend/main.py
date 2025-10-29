@@ -140,9 +140,9 @@ def chat():
         return jsonify({"reply": "Say something first."})
 
     # Keep prompt simple & reliable for both providers
-system_note = "You are a concise, accurate AI medical assistant for a pre-med student. If uncertain, say so briefly."
-prompt = f"{system_note}\n\nUser question: {user_message}"
-reply, meta = hf_generate(prompt, max_new_tokens=220)
+    system_note = "You are a concise, accurate AI medical assistant for a pre-med student. If uncertain, say so briefly."
+    prompt = f"{system_note}\n\nUser question: {user_message}"
+    reply, meta = hf_generate(prompt, max_new_tokens=220)
 
     try:
         reply, meta = hf_generate(prompt, max_new_tokens=220)
