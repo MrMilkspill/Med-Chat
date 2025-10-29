@@ -41,33 +41,31 @@ def chat():
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
-    system = "You are a concise, accurate AI medical assistant for a pre-med student."
+        system = "You are a concise, accurate AI medical assistant for a pre-med student."
     prompt = f"System: {system}\nUser: {user_message}\nAssistant:"
 
     try:
-        # Prefer 'conversational' per provider support
-        conv_payload = {
-            "text": prompt,
-            "past_user_inputs": [],
-            "generated_responses": []
-        }
-        conv_out = client.conversational(conv_payload)
-        reply = (conv_out.get("generated_text") or "").strip()
-        if not reply and isinstance(conv_out, list) and conv_out and isinstance(conv_out[0], dict):
+        # ✅ Correct: use named args for the conversational task
+        conv_out = client.conversational(
+            text=prompt,
+            past_user_inputs=[],
+            generated_responses=[]
+        )
+
+        # HF usually returns a dict with generated_text
+        reply = ""
+        if isinstance(conv_out, dict):
+            reply = (conv_out.get("generated_text") or "").strip()
+        elif isinstance(conv_out, list) and conv_out and isinstance(conv_out[0], dict):
             reply = (conv_out[0].get("generated_text") or "").strip()
 
-        # Fallback: text_generation (some providers still allow it)
         if not reply:
-            tg_out = client.text_generation(
-                prompt,
-                max_new_tokens=220,
-                temperature=0.7,
-                do_sample=True,
-                return_full_text=False
-            )
-            reply = (tg_out or "").strip()
+            reply = "…"
+
+        return jsonify({"reply": reply})
 
     except Exception as e:
+        # show the real error so you can see it in the Vercel Network Response
         return jsonify({"reply": f"Server error: {e}"}), 502
 
     if not reply:
