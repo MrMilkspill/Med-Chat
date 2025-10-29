@@ -5,7 +5,10 @@
 */
 
 const storageKey = "solo-chat-v1";
-const API_BASE = "https://med-chat-34nn.onrender.com"; // keep relative; Vercel will serve /api/chat from the same origin
+const API_BASE =
+  (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+    ? "http://127.0.0.1:5000"
+    : "https://med-chat-34nn.onrender.com";
 
 const $ = (s, el = document) => el.querySelector(s);
 const messageList = $("#messageList");
