@@ -56,6 +56,6 @@ def health():
     return jsonify({"ok": True, "model": MODEL_ID})
 
 if __name__ == "__main__":
-    # keep local dev simple (HTTP); switch to adhoc HTTPS only if you’ve installed cryptography
-    app.run(host="127.0.0.1", port=5000, debug=True)
-    # app.run(host="127.0.0.1", port=5000, debug=True, ssl_context="adhoc")
+    import os
+    port = int(os.environ.get("PORT", 5000))  # Render gives you this dynamically
+    app.run(host="0.0.0.0", port=port, debug=False)
