@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
-MODEL_ID = os.getenv("MODEL_ID", "gpt2")
+MODEL_ID = os.getenv("MODEL_ID", "microsoft/Phi-3-mini-4k-instruct")
 
 if not HF_TOKEN:
     raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
