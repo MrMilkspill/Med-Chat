@@ -1,61 +1,64 @@
-# main.py
-import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
+import os
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
+
+HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")  # use your existing key var
+MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
+
+assert HF_TOKEN, "Missing HUGGINGFACE_API_KEY in environment!"
+
+client = InferenceClient(token=HF_TOKEN)
 
 app = Flask(__name__)
 CORS(app)
 
-HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
-MODEL_ID = os.getenv("MODEL_ID", "gpt2")
-
-if not HF_TOKEN:
-    raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
-
-client = InferenceClient(model=MODEL_ID, token=HF_TOKEN)
-
-def to_hf_messages(msgs):
-    out = []
-    for m in msgs or []:
-        role = m.get("role", "user")
-        content = (m.get("content") or "").strip()
-        if not content:
-            continue
-        if role not in ("system", "user", "assistant"):
-            role = "user"
-        out.append({"role": role, "content": content})
-    if not out:
-        out = [{"role": "user", "content": "Hello!"}]
-    return out
-
-@app.post("/api/chat")
+@app.route("/api/chat", methods=["POST"])
 def chat():
     data = request.get_json(silent=True) or {}
-    msgs = to_hf_messages(data.get("messages"))
+    user_message = (data.get("message") or "").strip()
+
+    if not user_message:
+        return jsonify({"reply": "Say something first."})
+
+    # Simple identity messages
+    canned = {
+        "who are you": "I'm an AI assistant who can answer questions, explain topics, or just chat.",
+        "what can you do": "I can summarize, research, or generate answers across science, medicine, or anything you throw at me.",
+        "hello": "Hey there! What do you want to talk about?",
+        "hi": "Hey there! How’s it going?"
+    }
+    for key, text in canned.items():
+        if re.search(rf"\b{re.escape(key)}\b", user_message.lower()):
+            return jsonify({"reply": text})
+
+    # Prepare messages for chat completion
+    messages = [
+        {"role": "system", "content": "You are a knowledgeable AI assistant. Be clear and concise."},
+        {"role": "user", "content": user_message}
+    ]
 
     try:
-        res = client.chat_completion(
-            messages=msgs,
-            max_tokens=256,
+        completion = client.chat.completions.create(
+            model=MODEL_ID,
+            messages=messages,
+            max_tokens=400,
             temperature=0.7,
-            top_p=0.95,
         )
-        reply = res["choices"][0]["message"]["content"].strip()
-        return jsonify({"reply": reply})
+        ai_reply = completion.choices[0].message.content
+        return jsonify({"reply": ai_reply})
     except Exception as e:
-        # log to server, don't dump into user chat
-        app.logger.warning(f"chat_completion error: {e}")
-        return jsonify({"error": "model_error", "detail": str(e)}), 502
+        print("Error from model:", e)
+        return jsonify({"reply": f"Server error: {e}"}), 502
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "model": MODEL_ID})
+    return {"ok": True, "model": MODEL_ID}
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))  # Render gives you this dynamically
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
