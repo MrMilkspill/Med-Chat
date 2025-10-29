@@ -64,21 +64,29 @@ def whoami():
 
 @app.get("/api/hf-test")
 def hf_test():
-    """Send a minimal conversational request directly to the model."""
+    """Minimal test using text-generation format (works broadly)."""
+    api_url = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
+    # Mistral instruct format
+    prompt = "<s>[INST] You are helpful. Say 'hi' in one short sentence. [/INST]"
+
     payload = {
-        "inputs": {
-            "text": "System: You are helpful.\nUser: Say hi.\nAssistant:",
-            "past_user_inputs": [],
-            "generated_responses": []
-        },
-        "parameters": {"max_new_tokens": 32, "temperature": 0.7, "return_full_text": False}
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 64,
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "do_sample": True,
+            "return_full_text": False   # some providers ignore this; we handle either shape
+        }
     }
-    r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=60)
+
+    r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
     try:
         data = r.json()
     except Exception:
         data = {"text": r.text}
     return {"status": r.status_code, "data": data}
+
 
 @app.post("/api/chat")
 def chat():
@@ -87,51 +95,61 @@ def chat():
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
+    # Build an instruction-style prompt for Mistral
     system = "You are a concise, accurate AI medical assistant for a pre-med student."
-    prompt = f"System: {system}\nUser: {user_message}\nAssistant:"
+    # Compact instruction block
+    instr = (
+        f"{system}\n\n"
+        f"User question: {user_message}\n"
+        f"Rules: Keep it clear and correct. If uncertain, say so briefly."
+    )
+    prompt = f"<s>[INST] {instr} [/INST]"
 
     payload = {
-        "inputs": {
-            "text": prompt,
-            "past_user_inputs": [],
-            "generated_responses": []
-        },
-        "parameters": {"max_new_tokens": 220, "temperature": 0.7, "return_full_text": False}
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 220,
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "do_sample": True,
+            "return_full_text": False
+        }
     }
 
-    for attempt in range(2):
+    api_url = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
+
+    try:
+        r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
+        # If model is cold-starting, HF returns 503; you can retry once if you want
+        if r.status_code == 503:
+            time.sleep(1.5)
+            r = requests.post(api_url, headers=HEADERS, json=payload, timeout=60)
+
+        r.raise_for_status()
+        out = r.json()
+
+        # Possible shapes:
+        #   [{"generated_text":"..."}]
+        #   {"generated_text":"..."}
+        reply = ""
+        if isinstance(out, list) and out and isinstance(out[0], dict):
+            reply = (out[0].get("generated_text") or "").strip()
+        elif isinstance(out, dict):
+            reply = (out.get("generated_text") or "").strip()
+
+        if not reply:
+            reply = "…"
+
+        return jsonify({"reply": reply})
+
+    except requests.HTTPError as e:
         try:
-            r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=60)
-            if r.status_code == 503 and attempt == 0:
-                time.sleep(1.5)  # warm-up retry
-                continue
-            r.raise_for_status()
-            out = r.json()
-
-            reply = ""
-            if isinstance(out, dict):
-                reply = (out.get("generated_text") or "").strip()
-                if not reply:
-                    conv = out.get("conversation") or {}
-                    gen = conv.get("generated_responses") or []
-                    if gen and isinstance(gen[0], str):
-                        reply = gen[0].strip()
-            elif isinstance(out, list) and out and isinstance(out[0], dict):
-                reply = (out[0].get("generated_text") or "").strip()
-
-            if not reply:
-                reply = "…"
-            return jsonify({"reply": reply})
-
-        except requests.HTTPError as e:
-            # Surface exact provider error in response (so Vercel Network → Response shows it)
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            return jsonify({"reply": f"Server error: {e}; detail: {detail}"}), 502
-        except Exception as e:
-            return jsonify({"reply": f"Server error: {e}"}), 502
-
+            detail = r.json()
+        except Exception:
+            detail = r.text
+        return jsonify({"reply": f"Server error: {e}; detail: {detail}"}), 502
+    except Exception as e:
+        return jsonify({"reply": f"Server error: {e}"}), 502
+        
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
