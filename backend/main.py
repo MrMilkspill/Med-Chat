@@ -10,7 +10,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# CORS setup: allow your Vercel + local Live Server
+# CORS setup
 CORS(app, resources={r"/*": {
     "origins": [
         r"https://.*\.vercel\.app",
@@ -26,16 +26,13 @@ HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 MODEL_ID = os.getenv("MODEL_ID", "bigscience/bloom-560m")
 
 if not HUGGINGFACE_API_KEY:
-    raise RuntimeError("Missing HUGGINGFACE_API_KEY in environment")
+    print("⚠️ Missing HUGGINGFACE_API_KEY — using unauthenticated inference")
 
-HEADERS = {
-    "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
-    "Content-Type": "application/json"
-}
+HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}", "Content-Type": "application/json"}
 
 
 def extract_user_message(payload: dict) -> str:
-    """Safely extract user text from JSON."""
+    """Get the user's message safely from JSON."""
     if "message" in payload:
         return (payload.get("message") or "").strip()
     msgs = payload.get("messages")
@@ -49,18 +46,15 @@ def extract_user_message(payload: dict) -> str:
 
 def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
     """
-    Try Hugging Face Inference API first (text-generation),
-    fallback to Router completions.
+    Try Hugging Face Inference API (public) first, then fallback to Router.
     """
-
     is_mistral = "mistral" in MODEL_ID.lower()
     prompt_for_textgen = f"<s>[INST] {prompt} [/INST]" if is_mistral else f"{prompt}\n"
 
-    # ---- A) Inference API ----
-    # ---- A) Inference API (no auth header) ----
+    # ---- A) Inference API (NO AUTH for public models) ----
     api_a = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
     payload_a = {
-        "inputs": f"{prompt}\n",   # no [INST] for bloom
+        "inputs": prompt_for_textgen,
         "parameters": {
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
@@ -69,20 +63,12 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
             "return_full_text": False
         }
     }
-# IMPORTANT: no HEADERS here (no Authorization) → use only content-type
-    ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
-    if ra.status_code == 503:
-        time.sleep(1.5)
-        ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
-            }
-        }
 
     try:
-        ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
+        ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
         if ra.status_code == 503:
             time.sleep(1.5)
-            ra = requests.post(api_a, headers=HEADERS, json=payload_a, timeout=60)
-
+            ra = requests.post(api_a, headers={"Content-Type": "application/json"}, json=payload_a, timeout=60)
         if ra.ok:
             out = ra.json()
             reply = ""
@@ -95,7 +81,7 @@ def hf_generate(prompt: str, max_new_tokens=220, temperature=0.7, top_p=0.95):
     except Exception:
         ra = None
 
-    # ---- B) Router Completions ----
+    # ---- B) Router completions fallback ----
     api_b = "https://router.huggingface.co/v1/completions"
     payload_b = {
         "model": MODEL_ID,
