@@ -11,7 +11,6 @@ app = Flask(__name__)
 # Replace <your-vercel-project> with your actual Vercel URL (no https:// if you want)
 CORS(app, resources={r"/*": {"origins": [
     "https://med-chat-delta.vercel.app/",   # whatever your actual vercel domain is
-    "http://127.0.0.1:5500"
 ]}})
 
 
