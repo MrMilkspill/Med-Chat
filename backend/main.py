@@ -3,76 +3,77 @@ from flask_cors import CORS
 from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 import os
+import time
 
 load_dotenv()
 
 app = Flask(__name__)
 
-# Allow both local and Vercel frontends
+# Allow Vercel (all preview/prod) + your local live server
 CORS(app, resources={r"/*": {
     "origins": [
-        r"https://.*\.vercel\.app",   # any vercel deployment
-        "http://127.0.0.1:5500"       # local live server
+        r"https://.*\.vercel\.app",
+        "http://127.0.0.1:5500"
     ],
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type"]
 }})
 
-# Hugging Face credentials
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 MODEL_ID = os.getenv("MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
 
 if not HF_TOKEN:
-    raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
+    raise RuntimeError("Missing HUGGINGFACE_API_KEY in environment")
 
-client = InferenceClient(token=HF_TOKEN)
+# Bind client to the model we want (no task switching)
+client = InferenceClient(model=MODEL_ID, token=HF_TOKEN)
 
+def extract_user_message(payload: dict) -> str:
+    # Supports both {message:"..."} and {messages:[{role,content},...]}
+    if "message" in payload:
+        return (payload["message"] or "").strip()
+    msgs = payload.get("messages")
+    if isinstance(msgs, list) and msgs:
+        for m in reversed(msgs):
+            c = (m.get("content") or "").strip()
+            if c:
+                return c
+    return ""
 
 @app.post("/api/chat")
 def chat():
     data = request.get_json(silent=True) or {}
-
-    # Handle both message formats
-    if "message" in data:
-        user_message = (data["message"] or "").strip()
-    elif "messages" in data and isinstance(data["messages"], list):
-        user_message = (data["messages"][-1].get("content") or "").strip()
-    else:
-        user_message = ""
-
+    user_message = extract_user_message(data)
     if not user_message:
         return jsonify({"reply": "Say something first."})
 
-    try:
-        # Try using chat.completions (new API)
-        completion = client.chat.completions.create(
-            model=MODEL_ID,
-            messages=[
-                {"role": "system", "content": "You are a concise, knowledgeable AI medical assistant who provides accurate, professional, and clear explanations to pre-med students."},
-                {"role": "user", "content": user_message}
-            ],
-            max_tokens=256,
-            temperature=0.7,
-            top_p=0.95
-        )
-        reply = completion.choices[0].message.content.strip()
+    system = "You are a concise, accurate AI medical assistant for a pre-med student."
+    prompt = f"System: {system}\nUser: {user_message}\nAssistant:"
 
-    except Exception:
-        # Fallback for models that don’t support chat.completions
-        prompt = (
-            "System: You are a concise, knowledgeable AI medical assistant.\n"
-            f"User: {user_message}\nAssistant:"
-        )
-        reply = client.text_generation(
-            prompt,
-            max_new_tokens=220,
-            temperature=0.7,
-            do_sample=True,
-            return_full_text=False
-        ).strip()
+    # Try once; if model is warming up (503), retry quickly
+    for attempt in range(2):
+        try:
+            out = client.text_generation(
+                prompt,
+                max_new_tokens=220,
+                temperature=0.7,
+                do_sample=True,
+                return_full_text=False
+            )
+            reply = (out or "").strip()
+            if not reply:
+                reply = "…"
+            return jsonify({"reply": reply})
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(1.5)
+                continue
+            return jsonify({"reply": f"Server error: {e}"}), 502
 
-    return jsonify({"reply": reply})
-
+@app.get("/api/health")
+def health():
+    return {"ok": True, "model": MODEL_ID}
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
