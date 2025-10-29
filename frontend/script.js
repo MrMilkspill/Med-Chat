@@ -70,25 +70,39 @@ async function respond(userText){
 
 /* Real API call to your Vercel backend */
 async function callYourApi(history){
-  const r = await fetch(`${API_BASE}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: history })
-  });
+  let r;
+  try {
+    r = await fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history })
+    });
+  } catch (netErr) {
+    console.error("Network error hitting backend:", netErr);
+    throw new Error("Network error contacting backend");
+  }
 
   let data = null;
-  try { data = await r.json(); } catch {}
+  try { data = await r.json(); } catch (parseErr) {
+    // If backend returned HTML or empty body on error
+    const text = await r.text().catch(()=>"(no body)");
+    console.error("Non-JSON response:", text);
+    throw new Error(`Bad non-JSON response (${r.status})`);
+  }
 
   if (!r.ok) {
-    const detail = data && (data.detail || data.error) ? ` (${data.detail || data.error})` : "";
-    throw new Error(`API error ${r.status}${detail}`);
+    console.error("Backend error:", { status: r.status, data });
+    const detail = (data && (data.detail || data.error || data.reply)) || "";
+    throw new Error(`API error ${r.status}${detail ? ` (${detail})` : ""}`);
   }
 
   if (!data || typeof data.reply !== "string") {
+    console.error("Bad response shape:", data);
     throw new Error("Bad response shape from server");
   }
   return data.reply.trim();
 }
+
 
 /* Local offline bot fallback */
 async function localBot(query, history){
