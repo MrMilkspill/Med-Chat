@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
-MODEL_ID = os.getenv("MODEL_ID", "facebook/blenderbot-400M-distill")
+MODEL_ID = os.getenv("MODEL_ID", "gpt2")
 
 if not HF_TOKEN:
     raise RuntimeError("Missing HUGGINGFACE_API_KEY in .env")
