@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   }
 
   const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
-  const MODEL_ID = process.env.MODEL_ID || "HuggingFaceH4/zephyr-7b-beta";
+  const MODEL_ID = process.env.MODEL_ID || "bigscience/bloom-560m";
   if (!HUGGINGFACE_API_KEY) return res.status(500).json({ error: "missing_token" });
 
   try {
