@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   }
 
   const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
-  const MODEL_ID = process.env.MODEL_ID || "mistralai/Mistral-7B-Instruct-v0.2";
+  const MODEL_ID = process.env.MODEL_ID || "bigscience/bloom-560m";
   if (!HUGGINGFACE_API_KEY) return res.status(500).json({ error: "Missing API key" });
 
   try {
