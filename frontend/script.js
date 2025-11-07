@@ -1,11 +1,16 @@
 /* One-user chat with an API-backed bot.
    - Messages saved in localStorage.
-   - Bot replies by calling your Vercel serverless function at /api/chat.
+   - Bot replies by calling your backend at /api/chat (base URL from runtime env).
    - Falls back to a local offline bot if the request fails.
 */
 
 const storageKey = "solo-chat-v1";
-const API_BASE = "https://med-chat-34nn.onrender.com";
+
+// Pull API_BASE from the env snippet served at /api/runtime-config.js
+const API_BASE = ((window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.API_BASE) || "").replace(/\/+$/, "");
+if (!API_BASE) {
+  console.error("API_BASE is missing. Set it in Vercel env (API_BASE) and redeploy.");
+}
 
 const $ = (s, el = document) => el.querySelector(s);
 const messageList = $("#messageList");
@@ -61,6 +66,7 @@ async function respond(userText){
     }));
     reply = await callYourApi(history);
   } catch (err) {
+    console.error("Falling back to local bot:", err);
     reply = await localBot(userText, messages);
   }
 
@@ -68,8 +74,9 @@ async function respond(userText){
   addMessage({ author: "AI", role: "assistant", text: reply });
 }
 
-/* Real API call to your Vercel backend */
+/* Real API call to your backend */
 async function callYourApi(history){
+  if (!API_BASE) throw new Error("API_BASE not set");
   let r;
   try {
     r = await fetch(`${API_BASE}/api/chat`, {
@@ -83,17 +90,17 @@ async function callYourApi(history){
   }
 
   let data = null;
-  try { data = await r.json(); } catch (parseErr) {
-    // If backend returned HTML or empty body on error
+  try {
+    data = await r.json();
+  } catch (parseErr) {
     const text = await r.text().catch(()=>"(no body)");
-    console.error("Non-JSON response:", text);
+    console.error("Non-JSON response body:", text);
     throw new Error(`Bad non-JSON response (${r.status})`);
   }
 
   if (!r.ok) {
-    console.error("Backend error:", { status: r.status, data });
-    const detail = (data && (data.detail || data.error || data.reply)) || "";
-    throw new Error(`API error ${r.status}${detail ? ` (${detail})` : ""}`);
+    const detail = data && (data.detail || data.error || data.reply) ? ` (${data.detail || data.error || data.reply})` : "";
+    throw new Error(`API error ${r.status}${detail}`);
   }
 
   if (!data || typeof data.reply !== "string") {
@@ -102,7 +109,6 @@ async function callYourApi(history){
   }
   return data.reply.trim();
 }
-
 
 /* Local offline bot fallback */
 async function localBot(query, history){
