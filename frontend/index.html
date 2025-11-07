@@ -6,6 +6,7 @@
   <title>Chat with AI</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <header class="topbar" aria-label="Chat header">
     <div class="brand">
@@ -40,6 +41,10 @@
     <span>Enter to send. Shift+Enter for newline.</span>
   </footer>
 
+  <!-- Load environment variable (backend URL) first -->
+  <script src="/api/runtime-config.js"></script>
+
+  <!-- Then load your chat app -->
   <script src="script.js"></script>
 </body>
 </html>
