@@ -1,57 +1,47 @@
 # app.py
-import os, json, logging
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import os, logging
+from flask import Flask, request, jsonify, make_response
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)  # good hygiene on Render
 
-# Logging that actually shows errors
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("med-chat")
+logging.basicConfig(level=logging.INFO)
 
-# CORS: allow your Vercel URLs (comma-separated in env) + localhost
-allowed = os.getenv("ALLOWED_ORIGINS",
-                    "https://*.vercel.app,http://localhost:5500").split(",")
-CORS(app, resources={r"/*": {
-    "origins": allowed,
-    "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type"]
-}})
+ALLOWED = set([o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()])
 
-@app.get("/health")
+def _corsify(resp):
+    origin = request.headers.get("Origin")
+    if origin and (origin in ALLOWED):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        # If you ever use cookies/credentials, also set:
+        # resp.headers["Access-Control-Allow-Credentials"] = "true"
+    return resp
+
+@app.route("/health", methods=["GET"])
 def health():
-    return {"ok": True}, 200
+    return _corsify(jsonify({"ok": True}))
 
-@app.post("/api/chat")
-def api_chat():
+@app.route("/api/chat", methods=["POST", "OPTIONS"])
+def chat():
+    # 1) Handle preflight cleanly
+    if request.method == "OPTIONS":
+        return _corsify(make_response(("", 204)))
+
+    # 2) Handle real POST
     try:
-        # Log raw body for debugging
-        raw = request.get_data(cache=False, as_text=True)
-        log.info("POST /api/chat raw: %s", raw[:500])
-
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            return jsonify({"error": "Body must be JSON object"}), 400
-
+        data = request.get_json(silent=True) or {}
         messages = data.get("messages", [])
-        if not isinstance(messages, list):
-            return jsonify({"error": "messages must be a list"}), 400
-
-        last = ""
-        if messages and isinstance(messages[-1], dict):
-            last = str(messages[-1].get("content") or "")
-
-        # TODO: call your real model/service here
-        reply_text = f"Echo: {last or 'hello'}"
-
-        return jsonify({"reply": reply_text}), 200
-
+        last = messages[-1].get("content") if messages and isinstance(messages[-1], dict) else "hello"
+        reply = f"Echo: {last}"
+        return _corsify(jsonify({"reply": reply}))
     except Exception as e:
-        # Log the full exception so you actually see why it 502'd
-        log.exception("Error in /api/chat: %s", e)
-        return jsonify({"error": str(e)}), 500
+        log.exception("Error in /api/chat")
+        return _corsify(jsonify({"error": str(e)})), 500
 
 if __name__ == "__main__":
-    # Render sets PORT
-    port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
